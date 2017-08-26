@@ -1,0 +1,17 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+x <- seq(-1, 1, length=21)
+Z <- outer(x, x, function(x, y)sqrt(1-x^2-y^2))
+persp(x=x, y=x, z=Z)
+```
+
+# rando
+
+```{r}
+
+```
+
