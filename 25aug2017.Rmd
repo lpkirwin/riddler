@@ -1,0 +1,242 @@
+---
+title: "Riddler - 2017-08-25"
+output: html_notebook
+---
+
+## Riddler classic
+
+*What's the minimum size of tetrahedron that can hold four spheres each with radius 1?*
+
+First step is to recognize that the problem is symmetric w.r.t. the four sides of the tetrahedron, so we can consider a representative side in two dimensions and then generalise the answer to three.
+
+```{r setup}
+
+library(ggplot2)
+library(ggthemes)
+library(tibble)
+library(magrittr)
+library(geometry)
+library(animation)
+
+ani.options(convert = shortPathName(ani.options("convert")))
+
+
+```
+
+```{r}
+centers <- tribble(
+  ~name, ~x, ~y,
+  "A",   -1,  0,
+  "B",    1,  0,
+  "C",    0,  sqrt(3)
+)
+```
+
+```{r}
+
+circles <- apply(centers, 1, function(c) {
+  names(c) <- NULL
+  c_n <- c[1]
+  c_x <- as.numeric(c[2])
+  c_y <- as.numeric(c[3])
+  r <- 1:50 / 50 * 2 * pi
+  data.frame(
+   name = c_n,
+      x = cos(r) + c_x,
+      y = sin(r) + c_y
+  )
+}) %>% do.call(rbind, .)
+
+circles2 <- apply(centers, 1, function(c) {
+  names(c) <- NULL
+  c_n <- c[1]
+  c_x <- as.numeric(c[2])
+  c_y <- as.numeric(c[3])
+  r <- 1:20 / 20 * 2 * pi
+  data.frame(
+   name = c_n,
+      x = cos(r) + c_x,
+      y = sin(r) + c_y
+  )
+}) %>% do.call(rbind, .)
+
+```
+
+```{r}
+g <- ggplot(circles) +
+  geom_polygon(aes(x, y, group = name), fill = "pink", color = "black") + 
+  coord_fixed(ratio = 1, xlim = c(-12,12), ylim = c(-10,12)) +
+  theme_solid()
+
+print(g)
+```
+
+
+```{r}
+points <- tribble(
+  ~pt,  ~x,  ~y,
+  "x",   0,  11,
+  "y", -11,  -7,
+  "z",  11, - 7
+)
+```
+
+```{r}
+
+g + geom_polygon(data = points,
+                      aes(x,y),
+                 color = "navy",
+                 fill = "navy",
+                 alpha = 0.1) +
+  theme(panel.background = element_rect(fill = "snow2"))
+
+```
+
+```{r}
+# area of a cartesian triangle
+area <- function(p) {
+  abs(
+    (p[1,2] * (p[2,3] - p[3,3]) + 
+       p[2,2] * (p[3,3] - p[1,3]) + 
+       p[3,2] * (p[1,3] - p[2,3])
+     ) / 2
+  ) %>% unlist
+}
+```
+
+```{r}
+# check for edge violations (circles outside triangle)
+check_edges <- function(c, p) {
+  for (i in 1:dim(c)[1]) {
+    # browser()
+    # pts <- rbind(c[i,2:3], p[,2:3])
+    pts <- c[i,2:3]
+    pts[2:4,] <- p[,2:3]
+    hull <- convhulln(pts)
+    if (min(hull) < 2) return(FALSE)
+  }
+  return(TRUE)
+}
+```
+
+```{r}
+# check for edge violations (circles outside triangle)
+check_edges2 <- function(c, p) {
+  c_rows <- dim(c)[1]
+  p_rows <- dim(p)[1]
+  pts <- p[,2:3]
+  pts[(p_rows+1):(p_rows+c_rows),] <- c[,2:3]
+  hull <- convhulln(pts)
+  return(max(hull) <= p_rows)
+}
+```
+
+```{r}
+sim_anneal <- function(c, pts, rounds) {
+  # browser()
+  start_temp <- 4
+  step <- 0.1
+  temp <- start_temp
+  history <- pts
+  history$t <- 0L
+  history$area <- area(pts)
+  history$temp <- start_temp
+  history$check <- TRUE
+  history$prb_keep <- 1
+  history$keep <- TRUE
+    for (t in 1:rounds) {
+    old_area <- area(pts)
+    new_pts <- pts
+    # pick point and dimension to modify
+    i <- 1:3
+    j <- 2:3
+    # move by random amount
+    new_pts[i,j] <- new_pts[i,j] + rnorm(6)*temp/start_temp
+    # probability of keeping new pts
+    new_area <- area(new_pts)
+    if (new_area < old_area) {
+      prb_keep <- 1
+    } else {
+      prb_keep <- exp((old_area - new_area) / temp)
+    }
+    check <- check_edges(c, new_pts)
+    if (!check) prb_keep <- 0
+    # keep/discard
+    if (runif(1) < prb_keep) {
+      pts <- new_pts
+      keep <- TRUE
+    } else {keep <- FALSE}
+    # record keeping
+    new_history <- new_pts
+    new_history$t <- t
+    new_history$area <- new_area
+    new_history$temp <- temp
+    new_history$check <- check
+    new_history$prb_keep <- prb_keep
+    new_history$keep <- keep
+    history <- rbind(history, new_history)
+    # temp <- temp - (start_temp / rounds) # linear
+    temp <- temp * 0.999 # exponential
+    if (t %% 200 == 0) cat(paste0(t,"."))
+  }
+  return(history)
+}
+
+res <- sim_anneal(circles2, points, 10000)
+
+```
+
+```{r}
+
+h <- g + 
+  theme(panel.background = element_rect(fill = "snow2"),
+        legend.position = "none")
+
+```
+
+
+```{r}
+
+saveGIF(for (t in seq(0,10000,100)) {
+  chk <- max(res$check[res$t == t])
+  tri_color <- ifelse(chk,"navy","red")
+  tri_fill <- ifelse(chk,"navy",NA)
+  print(
+  h + geom_polygon(data = res[res$t == t,],
+                      aes(x,y), 
+                          color = tri_color, 
+                          fill = tri_fill,
+                 alpha = 0.1)
+)}, interval = 0.1)
+
+```
+
+```{r}
+
+res2 <- res[res$keep,]
+t_vals <- sort(unique(res2$t))
+t_vals <- t_vals[seq(0,length(t_vals),length(t_vals)/100)]
+saveGIF(for (t in t_vals) {
+  chk <- max(res2$check[res2$t == t])
+  tri_color <- ifelse(chk,"navy","red")
+  tri_fill <- ifelse(chk,"navy",NA)
+  print(
+  h + geom_polygon(data = res2[res2$t == t,],
+                      aes(x,y), 
+                          color = tri_color, 
+                          fill = tri_fill,
+                 alpha = 0.1)
+)}, interval = 0.1)
+
+```
+
+```{r}
+
+saveRDS(res, paste0("res_",gsub("[ :]", "_", Sys.time()),".RDS"))
+
+```
+
+
+
+
+
