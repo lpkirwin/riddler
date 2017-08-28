@@ -211,6 +211,7 @@ sim_anneal <- function(s_pts, m, rounds) {
 }
 
 res <- sim_anneal(S_pts, M1, 1000)
+
 ```
 
 
