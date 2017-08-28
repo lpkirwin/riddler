@@ -7,10 +7,23 @@ output: html_notebook
 
 *What's the minimum size of tetrahedron that can hold four spheres each with radius 1?*
 
-First step is to recognize that the problem is symmetric w.r.t. the four sides of the tetrahedron, so we can consider a representative side in two dimensions and then generalise the answer to three.
+First step is to assume that the problem is symmetric w.r.t. the four sides of the tetrahedron, so that we can consider a representative side in two dimensions and then generalise the answer to three.
+
+This is important because: (i) I have serious doubts about my laptop's ability to converge to a good solution in three dimensions, and (ii) because I'd like to avoid wrestling with 3D graphics if at all possible.
+
+The code can be broken down into a few sections:
+
+1. Generating starting positions for the circles and triangles
+
+2. Creating a few helper functions to calculate area and check for collisions
+
+3. The core annealing algorithm
+
+4. Generating GIFs from the results
+
+# Setup
 
 ```{r setup}
-
 library(ggplot2)
 library(ggthemes)
 library(tibble)
@@ -18,165 +31,148 @@ library(magrittr)
 library(geometry)
 library(animation)
 
-saveGIF(plot(1:3))
+saveGIF(plot(1:3)) # seem to need to call the function
+# once unsuccessfully before I can fix the file path below
 ani.options(convert = shortPathName(ani.options("convert")))
 
 ```
 
 ```{r}
+# arbitrary start points for each circle
 centers <- tribble(
-  ~name, ~x, ~y,
-  "A",   -1,  0,
-  "B",    1,  0,
-  "C",    0,  sqrt(3)
+    ~x,     ~y,
+  -2.5,    2.5,
+     1,      1,
+     0,   -3.5
 )
+
 ```
 
 ```{r}
-
-circles <- apply(centers, 1, function(c) {
-  names(c) <- NULL
-  c_n <- c[1]
-  c_x <- as.numeric(c[2])
-  c_y <- as.numeric(c[3])
-  r <- 1:100 / 100 * 2 * pi
+# 100 points around each circle for edge detection
+gen_unit_circle <- function(n_pts) {
+  r <- 1:n_pts / n_pts * 2 * pi
   data.frame(
-   name = c_n,
-      x = cos(r) + c_x,
-      y = sin(r) + c_y
+    x = cos(r),
+    y = sin(r)
   )
-}) %>% do.call(rbind, .)
+}
 
-circles2 <- apply(centers, 1, function(c) {
-  names(c) <- NULL
-  c_n <- c[1]
-  c_x <- as.numeric(c[2])
-  c_y <- as.numeric(c[3])
-  r <- 1:20 / 20 * 2 * pi
-  data.frame(
-   name = c_n,
-      x = cos(r) + c_x,
-      y = sin(r) + c_y
-  )
-}) %>% do.call(rbind, .)
+gen_circle_pts <- function(unit_c, cen) {
+  L <- apply(cen, 1, function(i) {
+    data.frame(
+      x = unit_c$x + i[1],
+      y = unit_c$y + i[2]
+    )
+    })
+  do.call(rbind, L)
+}
+
+unit_c <- gen_unit_circle(100)
+c_pts <- gen_circle_pts(unit_c, centers)
 
 ```
 
 ```{r}
-g <- ggplot(circles) +
-  geom_polygon(aes(x, y, group = name), fill = "lightpink", color = "black") + 
-  coord_fixed(ratio = 1, xlim = c(-11,11), ylim = c(-10,11)) +
-  theme_solid()
-
-print(g)
-```
-
-```{r}
-points <- tribble(
-  ~pt,  ~x,  ~y,
-  "x",   0,  11,
-  "y", -11,  -7,
-  "z",  11, - 7
+# arbitrary start points for triangle
+tri <- tribble(
+   ~x,  ~y,
+    0,  15,
+  -15, -8,
+   15, -8
 )
-```
-
-```{r}
-
-g + geom_polygon(data = points,
-                      aes(x,y),
-                 color = "navy",
-                 fill = "navy",
-                 alpha = 0.1) +
-  theme(panel.background = element_rect(fill = "snow2"))
 
 ```
 
-```{r}
-
-h <- g + 
-  theme(panel.background = element_rect(fill = "white"),
-        legend.position = "none")
-
-print(h)
-
-```
+# Functions
 
 ```{r}
 # area of a cartesian triangle
 area <- function(p) {
-  abs(
-    (p[1,2] * (p[2,3] - p[3,3]) + 
-       p[2,2] * (p[3,3] - p[1,3]) + 
-       p[3,2] * (p[1,3] - p[2,3])
-     ) / 2
-  ) %>% unlist
+  mat <- array(c(p$x, p$y, rep(1,3)), dim = c(3,3))
+  abs(det(mat) / 2)
 }
+
 ```
 
 ```{r}
 # check for edge violations (circles outside triangle)
 check_edges <- function(c, p) {
-  for (i in 1:dim(c)[1]) {
-    # browser()
-    # pts <- rbind(c[i,2:3], p[,2:3])
-    pts <- c[i,2:3]
-    pts[2:4,] <- p[,2:3]
-    hull <- convhulln(pts)
-    if (min(hull) < 2) return(FALSE)
-  }
-  return(TRUE)
-}
-```
-
-```{r}
-# check for edge violations (circles outside triangle)
-check_edges2 <- function(c, p) {
   c_rows <- dim(c)[1]
   p_rows <- dim(p)[1]
-  pts <- p[,2:3]
-  pts[(p_rows+1):(p_rows+c_rows),] <- c[,2:3]
+  pts <- p
+  pts[(p_rows+1):(p_rows+c_rows),] <- c
   hull <- convhulln(pts)
   return(max(hull) <= p_rows)
 }
+
 ```
 
 ```{r}
-sim_anneal <- function(c, pts, rounds) {
+# check for circles touching
+ball_collide <- function(cen) min(dist(cen)) <= 2
+
+```
+
+# Annealing
+
+```{r}
+sim_anneal <- function(cen, c_pts, tri, rounds) {
   # browser()
+  # PARAMETERS
   start_temp <- 4
-  step <- 0.1
   temp <- start_temp
-  history <- pts
+  decay <- (1 - (1 / (rounds/11)))
+  unit_c <- gen_unit_circle(100)
+  # INITIALISE HISTORY
+  history <- tri
+  history$c_x <- cen$x
+  history$c_y <- cen$y
   history$t <- 0L
-  history$area <- area(pts)
+  history$area <- area(tri)
   history$temp <- start_temp
   history$check <- TRUE
   history$prb_keep <- 1
   history$keep <- TRUE
     for (t in 1:rounds) {
-    old_area <- area(pts)
-    new_pts <- pts
-    # pick point and dimension to modify
-    i <- 1:3
-    j <- 2:3
-    # move by random amount
-    new_pts[i,j] <- new_pts[i,j] + rnorm(6)*temp/start_temp
-    # probability of keeping new pts
-    new_area <- area(new_pts)
+    old_area <- area(tri)
+    # STEP ONE: NEW TRIANGLE
+    new_tri <- tri + rnorm(6)*temp/start_temp
+    ## probability of keeping new tri
+    new_area <- area(new_tri)
     if (new_area < old_area) {
       prb_keep <- 1
     } else {
       prb_keep <- exp((old_area - new_area) / temp)
     }
-    check <- check_edges2(c, new_pts)
+    check <- check_edges(c_pts, new_tri)
     if (!check) prb_keep <- 0
-    # keep/discard
+    ## keep/discard tri
     if (runif(1) < prb_keep) {
-      pts <- new_pts
+      tri <- new_tri
       keep <- TRUE
     } else {keep <- FALSE}
-    # record keeping
-    new_history <- new_pts
+    # STEP TWO: NEW CIRCLES
+    new_cen <- cen + rnorm(6)*temp/start_temp
+    ## decide whether to keep new circles
+    if (ball_collide(new_cen)) {
+      cen_keep <- FALSE
+    } else {
+      new_c_pts <- gen_circle_pts(unit_c, new_cen)
+      if (!check_edges(new_c_pts, tri)) {
+        cen_keep <- FALSE
+      } else {
+        cen_keep <- TRUE
+      }
+    }
+    if (cen_keep) {
+      cen <- new_cen
+      c_pts <- new_c_pts
+    }
+    # RECORD KEEPING
+    new_history <- new_tri
+    new_history$c_x <- cen$x
+    new_history$c_y <- cen$y
     new_history$t <- t
     new_history$area <- new_area
     new_history$temp <- temp
@@ -184,75 +180,106 @@ sim_anneal <- function(c, pts, rounds) {
     new_history$prb_keep <- prb_keep
     new_history$keep <- keep
     history <- rbind(history, new_history)
-    # temp <- temp - (start_temp / rounds) # linear
-    temp <- temp * 0.999 # exponential
+    temp <- temp * decay # exponential
     if (t %% 200 == 0) cat(paste0(t,"."))
   }
   return(history)
 }
 
-res <- sim_anneal(circles, points, 10000)
+res <- sim_anneal(centers, c_pts, tri, 20000)
+
+print(min(res$area[res$keep]))
 
 ```
 
-```{r}
+# Plotting
 
-saveGIF(for (t in seq(0,10000,100)) {
-  chk <- max(res$check[res$t == t])
+```{r}
+circle_plot <- function(res_data, t_val) {
+  # browser()
+  res_data <- res_data[res_data$t == t_val,]
+  chk <- max(res_data$check)
   tri_color <- ifelse(chk,"navy","red")
   tri_fill <- ifelse(chk,"navy",NA)
-  print(
-  h + geom_polygon(data = res[res$t == t,],
-                      aes(x,y), 
-                          color = tri_color, 
-                          fill = tri_fill,
-                 alpha = 0.1)
-)}, interval = 0.1)
+  g <- ggplot(res_data) +
+    geom_point(aes(c_x,c_y),
+               shape = 21, size = 18, fill = "green") + 
+    geom_polygon(aes(x,y),
+                 color = tri_color, fill = tri_fill, alpha = 0.1) +
+    coord_fixed(ratio = 1, xlim = c(-11,11), ylim = c(-10,11)) +
+    theme_solid() + theme(legend.position = "none")
+  print(g)
+}
 
 ```
 
 ```{r}
+saveGIF(for (t in seq(0,20000,200)) {
+  circle_plot(res, t)
+}, interval = 0.1)
 
+```
+
+```{r}
+nice_plot <- function(res_data, t_val) {
+  # browser()
+  res_data <- res_data[res_data$t == t_val,]
+  chk <- max(res_data$t) != max_t # define
+  tri_color <- ifelse(chk,"blue3","#33cc33")
+  tri_fill <- ifelse(chk, "blue3" ,"#33cc33")
+  g <- ggplot(res_data) +
+    geom_polygon(aes(x,y),
+                 color = tri_color, fill = tri_fill, alpha = 0.1) +
+    geom_text(data = data.frame(x = -9.3, y = -11.2),
+              aes(x, y, label = "Area: "),
+              hjust = 1,
+              size = 5) + 
+    geom_text(aes(x = -9.3, y = -11.2, label = round(area,2)),
+              hjust = 0, color = tri_color,
+              size = 5) +
+    geom_text(data = data.frame(x = -9.3, y = -12.2),
+              aes(x, y, label = "Temp: "),
+              hjust = 1,
+              size = 5) + 
+    geom_text(aes(x = -9.3, y = -12.2, label = round(temp,2)),
+              hjust = 0, color = tri_color,
+              size = 5) +
+    geom_text(data = data.frame(x = -9.3, y = -13.2),
+              aes(x, y, label = "Round: "),
+              hjust = 1,
+              size = 5) + 
+    geom_text(aes(x = -9.3, y = -13.2, label = round(t,2)),
+              hjust = 0, color = tri_color,
+              size = 5) +
+    geom_point(aes(c_x,c_y),
+               shape = 21, size = 18, 
+               fill = "lightpink") + 
+    coord_fixed(ratio = 1, xlim = c(-11,11), ylim = c(-13,8)) +
+    theme_solid() + 
+    theme(legend.position = "none",
+          panel.background = element_rect(fill = "grey85"))
+  print(g)
+}
+
+```
+
+```{r}
 res2 <- res[res$keep,]
 t_vals <- sort(unique(res2$t))
-t_vals <- t_vals[seq(0,length(t_vals),length(t_vals)/100)]
-t_vals <- c(rep(0L,11), seq(1,30,2), t_vals, rep(max(t_vals),7))
+t_vals <- t_vals[seq(0,length(t_vals),length(t_vals)/40)]
+t_vals <- t_vals[t_vals > 4000]
+t_vals <- c(rep(0L,22), seq(1,600,2), seq(605,4000,8), 
+            t_vals, rep(max(t_vals),14))
 t_vals <- t_vals[t_vals %in% res$t[res$keep]]
+max_t <- max(t_vals)
+
 saveGIF(for (t in t_vals) {
-  data <- res2[res2$t == t,]
-  chk <- max(data$t) != max(res2$t)
-  tri_color <- ifelse(chk,"navy","#2eb82e")
-  tri_fill <- ifelse(chk,"navy","#2eb82e")
-  print(
-  h + geom_polygon(data = data, aes(x,y), 
-                   color = tri_color,
-                   fill = tri_fill,
-                   alpha = 0.1) +
-      geom_polygon(data = circles, 
-                   aes(x,y,group = name),
-                   color = "black", fill = "white") +
-      geom_text(data = data.frame(x = -9.5, y = -9.2),
-                aes(x, y, label = "Area: "),
-                hjust = 1,
-                size = 5) + 
-      geom_text(data = data,
-                aes(x = -9.5, y = -9.2, label = round(area,2)),
-                hjust = 0, color = tri_color,
-                size = 5) +
-      geom_text(data = data.frame(x = -9.5, y = -10.2),
-                aes(x, y, label = "Temp: "),
-                hjust = 1,
-                size = 5) + 
-      geom_text(data = data,
-                aes(x = -9.5, y = -10.2, label = round(temp,2)),
-                hjust = 0, color = tri_color,
-                size = 5)
-)}, interval = 0.1)
+  nice_plot(res, t)
+}, interval = 0.08)
 
 ```
 
 ```{r}
-
 time_string <- function() gsub("[ :]", "_", Sys.time())
 
 saveRDS(res, paste0("res_",time_string(),".RDS"))
@@ -260,28 +287,7 @@ saveRDS(res, paste0("res_",time_string(),".RDS"))
 ```
 
 
-```{r}
-  h + geom_polygon(data = data, aes(x,y), 
-                   color = tri_color,
-                   fill = tri_fill,
-                   alpha = 0.1) +
-    geom_polygon(data = circles, 
-                 aes(x,y,group = name),
-                 color = "black", fill = "indianred1") +
-  geom_text(data = data.frame(x = -10, y = -9),
-            aes(x, y, label = "Area: "),
-            hjust = 1, size = 5) + 
-  geom_text(data = data,
-            aes(x = -10, y = -9, label = round(area,2)),
-            hjust = 0, color = tri_color) +
-    geom_text(data = data.frame(x = -10, y = -9.5),
-            aes(x, y, label = "Temp: "),
-            hjust = 1) + 
-  geom_text(data = data,
-            aes(x = -10, y = -9.5, label = round(temp,2)),
-            hjust = 0, color = tri_color)
-# ivory2, indianred1, palevioletred1, coral1
-```
+
 
 
 
