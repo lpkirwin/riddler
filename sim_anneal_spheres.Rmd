@@ -91,13 +91,13 @@ max(convhulln(rbind(M1, S_pts)))
 ```
 
 ```{r}
-sphere_plot <- function(SL, SR, SB, ST, M1, M2) {
+sphere_plot <- function(SL, SR, SB, ST, M1, M2, phi = 55, theta = 80) {
  
   {scatter3D(SL$x, SL$y, SL$z, colvar = SL$z, 
          col = ramp.col(col = c("black", "pink")),
          colkey = FALSE,
          xlim = lim, ylim = lim, zlim = lim,
-         phi = 65, theta = 80)
+         phi = phi, theta = theta)
   scatter3D(SR$x, SR$y, SR$z, colvar = SR$z, 
          col = ramp.col(col = c("black", "pink")),
          colkey = FALSE,
@@ -178,7 +178,7 @@ sim_anneal <- function(s_pts, m, rounds) {
   history$keep <- TRUE
   for (t in 1:rounds) {
     old_vol <- volume(m)
-    new_m <- m + rnorm(6)*temp/start_temp
+    new_m <- m + rnorm(6)*temp/start_temp*2
     new_vol <- volume(new_m)
     # probability of keeping new pts
     if (new_vol < old_vol) {
@@ -194,26 +194,40 @@ sim_anneal <- function(s_pts, m, rounds) {
       keep <- TRUE
     } else {keep <- FALSE}
     # record keeping
-    new_history <- new_m
-    new_history$t <- t
-    new_history$vol <- new_vol
-    new_history$temp <- temp
-    new_history$check <- check
-    new_history$prb_keep <- prb_keep
-    new_history$keep <- keep
-    history <- rbind(history, new_history)
+    if (keep) {
+      new_history <- new_m
+      new_history$t <- t
+      new_history$vol <- new_vol
+      new_history$temp <- temp
+      new_history$check <- check
+      new_history$prb_keep <- prb_keep
+      new_history$keep <- keep
+      history <- rbind(history, new_history)
+    }
     # temp <- temp - (start_temp / rounds) # linear
-    temp <- temp * 0.999 # exponential
-    if (t %% 200 == 0) cat(paste0(t,"."))
+    temp <- temp * 0.9999 # exponential
+    if (t %% 2000 == 0) cat(paste0(t,"."))
     # if (TRUE) cat(paste0(t,"."))
   }
   return(history)
 }
 
-res <- sim_anneal(S_pts, M1, 1000)
+res <- sim_anneal(S_pts, M1, 100000)
 ```
 
+```{r}
+res2 <- res[res$keep,]
+max_t <- max(res2$t)
 
+m1 <- res2[res2$t == max_t,1:3]
+m2 <- polygon_pts(m1$x, m1$y, m1$z)
+
+```
+
+```{r}
+sphere_plot(SL, SR, SB, ST, m1, m2, -20, 20)
+
+```
 
 
 
