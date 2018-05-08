@@ -1,2 +1,2 @@
 # riddler
-FiveThirtyEight Riddler problems
+FiveThirtyEight Riddler solutions
